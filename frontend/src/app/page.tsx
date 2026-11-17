@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
+import type { User } from "@supabase/supabase-js";
 
 type BackendHealth = {
   status: string;
@@ -18,15 +22,18 @@ const NAV_ITEMS = [
 ];
 
 export default function Home() {
+  const router = useRouter();
+  const [authChecking, setAuthChecking] = useState(true);
+  const [user, setUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [health, setHealth] = useState<BackendHealth | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [healthLoading, setHealthLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
   const checkHealth = async () => {
-    setLoading(true);
+    setHealthLoading(true);
     setError(null);
     try {
       const res = await fetch(`${apiUrl}/health`, { cache: "no-store" });
@@ -39,13 +46,56 @@ export default function Home() {
       setHealth(null);
       setError(err instanceof Error ? err.message : "Unable to reach server");
     } finally {
-      setLoading(false);
+      setHealthLoading(false);
     }
   };
 
   useEffect(() => {
+    // 1. Session verification & protected route check
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session?.user) {
+        router.replace("/login");
+      } else {
+        setUser(session.user);
+        setAuthChecking(false);
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session?.user) {
+        setUser(null);
+        router.replace("/login");
+      } else {
+        setUser(session.user);
+        setAuthChecking(false);
+      }
+    });
+
     checkHealth();
-  }, []);
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [router]);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    router.replace("/login");
+  };
+
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center font-sans text-slate-600">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="h-4 w-4 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+          Verifying session...
+        </div>
+      </div>
+    );
+  }
 
   const activeItem = NAV_ITEMS.find((item) => item.id === activeTab);
 
@@ -105,7 +155,7 @@ export default function Home() {
             <div className="flex items-center gap-2">
               <span
                 className={`h-2.5 w-2.5 rounded-full ${
-                  loading
+                  healthLoading
                     ? "bg-amber-400 animate-pulse"
                     : health
                     ? "bg-emerald-500"
@@ -113,7 +163,7 @@ export default function Home() {
                 }`}
               />
               <span className="text-xs font-medium">
-                {loading
+                {healthLoading
                   ? "Checking..."
                   : health
                   ? "Connected (FastAPI)"
@@ -121,7 +171,7 @@ export default function Home() {
               </span>
             </div>
 
-            {error && !loading && (
+            {error && !healthLoading && (
               <p className="mt-1 text-[11px] text-rose-600 leading-tight">
                 {error} (target: {apiUrl})
               </p>
@@ -144,9 +194,34 @@ export default function Home() {
             {activeItem?.label}
           </h2>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-slate-500 font-mono">
-              API: {apiUrl}
-            </span>
+            {user ? (
+              <div className="flex items-center gap-3">
+                <Link
+                  href="/profile"
+                  className="text-right hover:opacity-80 transition-opacity"
+                  title="View & Edit Profile"
+                >
+                  <div className="text-xs font-semibold text-slate-800">
+                    {user.user_metadata?.full_name || user.email}
+                  </div>
+                  <div className="text-[11px] text-slate-400 font-mono">
+                    {user.email}
+                  </div>
+                </Link>
+                <Link
+                  href="/profile"
+                  className="px-3 py-1.5 rounded-md text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors"
+                >
+                  Profile
+                </Link>
+                <button
+                  onClick={handleSignOut}
+                  className="px-3 py-1.5 rounded-md text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
+                >
+                  Sign Out
+                </button>
+              </div>
+            ) : null}
           </div>
         </header>
 
@@ -167,14 +242,34 @@ export default function Home() {
                 </span>
               </div>
 
-              <div className="mt-6 border-2 border-dashed border-slate-200 rounded-lg p-10 text-center">
-                <p className="text-sm text-slate-600 font-medium">
-                  {activeItem?.label} module placeholder.
-                </p>
-                <p className="text-xs text-slate-400 mt-1">
-                  Feature implementations will follow in subsequent phases.
-                </p>
-              </div>
+              {activeTab === "nutrition" ? (
+                <div className="mt-6 border-2 border-emerald-200 bg-emerald-50/40 rounded-xl p-8 text-center space-y-4">
+                  <div className="h-12 w-12 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-xl mx-auto shadow-sm">
+                    🥗
+                  </div>
+                  <div>
+                    <h4 className="text-base font-bold text-slate-900">FoodBridge Nutrition Assessment</h4>
+                    <p className="text-xs text-slate-600 max-w-md mx-auto mt-1">
+                      Complete your multi-step health, fitness, dietary restriction, and budget profile to receive tailored recommendations.
+                    </p>
+                  </div>
+                  <Link
+                    href="/nutrition"
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-colors"
+                  >
+                    Start Nutrition Assessment →
+                  </Link>
+                </div>
+              ) : (
+                <div className="mt-6 border-2 border-dashed border-slate-200 rounded-lg p-10 text-center">
+                  <p className="text-sm text-slate-600 font-medium">
+                    {activeItem?.label} module placeholder.
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Feature implementations will follow in subsequent phases.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Architecture Overview Card */}
@@ -192,8 +287,8 @@ export default function Home() {
                   <div className="text-slate-500 mt-1">FastAPI + Uvicorn + Pydantic Settings</div>
                 </div>
                 <div className="p-3 rounded-lg bg-slate-50 border border-slate-100">
-                  <div className="font-semibold text-slate-700">Database</div>
-                  <div className="text-slate-500 mt-1">Supabase Client configured via environment variables</div>
+                  <div className="font-semibold text-slate-700">Database & Auth</div>
+                  <div className="text-slate-500 mt-1">Supabase Client & Auth (Session & Metadata)</div>
                 </div>
               </div>
             </div>
